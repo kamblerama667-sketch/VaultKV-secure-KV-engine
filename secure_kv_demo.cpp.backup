@@ -1,0 +1,163 @@
+// secure_kv_demo.cpp
+//
+// End-to-end proof: a server thread accepts one real loopback TCP
+// connection, completes the handshake, then serves PUT/GET/DEL against a
+// real KVEngine over the encrypted channel. A client thread connects,
+// handshakes, and drives a sequence of operations, checking every
+// response against what it expects.
+//
+// Build:
+//   g++ -std=c++17 -O2 -pthread secure_kv_demo.cpp -lcrypto -o secure_kv_demo
+// If the linker says it can't find -lcrypto (common when libssl-dev isn't
+// installed but the runtime library is), link the versioned file directly:
+//   g++ -std=c++17 -O2 -pthread secure_kv_demo.cpp
+//       /usr/lib/x86_64-linux-gnu/libcrypto.so.3 -o secure_kv_demo
+// (path varies by distro/arch -- find / -name "libcrypto*" to locate
+// yours; on Termux it will be under $PREFIX/lib).
+
+#include "handshake.hpp"
+#include "kv_engine.hpp"
+#include "kv_protocol.hpp"
+
+#include <arpa/inet.h>
+#include <sys/socket.h>
+#include <unistd.h>
+
+#include <atomic>
+#include <cstdio>
+#include <iostream>
+#include <thread>
+
+using kvengine::KVEngine;
+
+void run_server(int listen_fd, std::atomic<bool>& ready_flag) {
+    KVEngine db("secure_kv_demo.db");
+    ready_flag = true;
+
+    sockaddr_in cli{};
+    socklen_t clilen = sizeof(cli);
+    const int conn = ::accept(listen_fd, reinterpret_cast<sockaddr*>(&cli), &clilen);
+    if (conn < 0) { std::cerr << "server: accept failed\n"; return; }
+
+    auto channel = secure::server_handshake(conn);
+    if (!channel) { std::cerr << "server: handshake failed\n"; ::close(conn); return; }
+    std::cout << "server: handshake complete\n";
+
+    while (true) {
+        const auto plaintext = channel->receive();
+        if (!plaintext) break; // client closed the connection
+
+        const auto req = kvproto::decode_request(*plaintext);
+        if (!req) { channel->send(kvproto::encode_response(kvproto::Status::Error)); continue; }
+
+        kvproto::Status status = kvproto::Status::Error;
+        std::string value;
+        switch (req->op) {
+            case kvproto::Op::Put:
+                status = db.put(req->key, req->value) ? kvproto::Status::Ok : kvproto::Status::Error;
+                break;
+            case kvproto::Op::Get: {
+                auto v = db.get(req->key);
+                if (v.has_value()) { status = kvproto::Status::Ok; value = *v; }
+                else status = kvproto::Status::NotFound;
+                break;
+            }
+            case kvproto::Op::Del:
+                status = db.del(req->key) ? kvproto::Status::Ok : kvproto::Status::NotFound;
+                break;
+        }
+        channel->send(kvproto::encode_response(status, value));
+    }
+    ::close(conn);
+}
+
+bool client_request(secure::SecureChannel& ch, kvproto::Op op, const std::string& key,
+                     const std::string& value, kvproto::Response& out) {
+    if (!ch.send(kvproto::encode_request(op, key, value))) return false;
+    const auto raw = ch.receive();
+    if (!raw) return false;
+    const auto resp = kvproto::decode_response(*raw);
+    if (!resp) return false;
+    out = *resp;
+    return true;
+}
+
+int main() {
+    std::cout << "*** kem_interface.hpp is using kem::INSECURE_MOCK, not real ML-KEM-768.\n"
+              << "*** The framing, key derivation, and AES-256-GCM channel below are real\n"
+              << "*** and tested; only the key-exchange math is a placeholder for now.\n\n";
+
+    std::remove("secure_kv_demo.db");
+
+    const int listen_fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = INADDR_ANY;
+    addr.sin_port = htons(58222);
+    const int opt = 1;
+    ::setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    if (::bind(listen_fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
+        std::perror("bind");
+        return 1;
+    }
+    ::listen(listen_fd, 1);
+
+    std::atomic<bool> server_ready{false};
+    std::thread server_thread(run_server, listen_fd, std::ref(server_ready));
+    while (!server_ready) std::this_thread::yield();
+
+    const int client_fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    sockaddr_in srv_addr{};
+    srv_addr.sin_family = AF_INET;
+    srv_addr.sin_port = htons(58222);
+    ::inet_pton(AF_INET, "127.0.0.1", &srv_addr.sin_addr);
+    if (::connect(client_fd, reinterpret_cast<sockaddr*>(&srv_addr), sizeof(srv_addr)) != 0) {
+        std::perror("connect");
+        return 1;
+    }
+
+    auto channel = secure::client_handshake(client_fd);
+    if (!channel) { std::cerr << "client: handshake failed\n"; return 1; }
+    std::cout << "client: handshake complete\n\n";
+
+    int passed = 0, total = 0;
+    auto check = [&](const char* label, bool cond) {
+        ++total;
+        std::cout << (cond ? "  OK   " : "  FAIL ") << label << "\n";
+        if (cond) ++passed;
+    };
+
+    kvproto::Response r;
+    client_request(*channel, kvproto::Op::Put, "alpha", "first-value", r);
+    check("PUT alpha", r.status == kvproto::Status::Ok);
+
+    client_request(*channel, kvproto::Op::Get, "alpha", "", r);
+    check("GET alpha == first-value", r.status == kvproto::Status::Ok && r.value == "first-value");
+
+    client_request(*channel, kvproto::Op::Put, "alpha", "updated-value", r);
+    client_request(*channel, kvproto::Op::Get, "alpha", "", r);
+    check("GET alpha after update == updated-value",
+          r.status == kvproto::Status::Ok && r.value == "updated-value");
+
+    client_request(*channel, kvproto::Op::Get, "does-not-exist", "", r);
+    check("GET missing key -> NotFound", r.status == kvproto::Status::NotFound);
+
+    client_request(*channel, kvproto::Op::Del, "alpha", "", r);
+    check("DEL alpha", r.status == kvproto::Status::Ok);
+
+    client_request(*channel, kvproto::Op::Get, "alpha", "", r);
+    check("GET alpha after delete -> NotFound", r.status == kvproto::Status::NotFound);
+
+    const std::string big_value(5000, 'z'); // exercise more than a couple of AES blocks
+    client_request(*channel, kvproto::Op::Put, "big", big_value, r);
+    client_request(*channel, kvproto::Op::Get, "big", "", r);
+    check("GET big (5000 bytes) round-trips exactly",
+          r.status == kvproto::Status::Ok && r.value == big_value);
+
+    std::cout << "\n" << passed << "/" << total << " checks passed\n";
+
+    ::close(client_fd);
+    server_thread.join();
+    ::close(listen_fd);
+    return (passed == total) ? 0 : 1;
+}

@@ -1,0 +1,67 @@
++ set -e
++ CFLAGS='-O3 -std=c99 -I mlkem_native -DMLK_CONFIG_PARAMETER_SET=768 -DMLK_CONFIG_NAMESPACE_PREFIX=mlkem -DMLK_CONFIG_NAMESPACE_PREFIX=mlkem -w'
++ mkdir -p build_objs
++ rm -f build_objs/mlk_1.o build_objs/mlk_10.o build_objs/mlk_11.o build_objs/mlk_2.o build_objs/mlk_3.o build_objs/mlk_4.o build_objs/mlk_5.o build_objs/mlk_6.o build_objs/mlk_7.o build_objs/mlk_8.o build_objs/mlk_9.o
++ i=0
++ OBJS=
+++ find mlkem_native/src -name '*.c'
++ for f in $(find mlkem_native/src -name "*.c")
++ i=1
++ obj=build_objs/mlk_1.o
++ gcc -O3 -std=c99 -I mlkem_native -DMLK_CONFIG_PARAMETER_SET=768 -DMLK_CONFIG_NAMESPACE_PREFIX=mlkem -DMLK_CONFIG_NAMESPACE_PREFIX=mlkem -w -c mlkem_native/src/poly_k.c -o build_objs/mlk_1.o
++ OBJS=' build_objs/mlk_1.o'
++ for f in $(find mlkem_native/src -name "*.c")
++ i=2
++ obj=build_objs/mlk_2.o
++ gcc -O3 -std=c99 -I mlkem_native -DMLK_CONFIG_PARAMETER_SET=768 -DMLK_CONFIG_NAMESPACE_PREFIX=mlkem -DMLK_CONFIG_NAMESPACE_PREFIX=mlkem -w -c mlkem_native/src/compress.c -o build_objs/mlk_2.o
++ OBJS=' build_objs/mlk_1.o build_objs/mlk_2.o'
++ for f in $(find mlkem_native/src -name "*.c")
++ i=3
++ obj=build_objs/mlk_3.o
++ gcc -O3 -std=c99 -I mlkem_native -DMLK_CONFIG_PARAMETER_SET=768 -DMLK_CONFIG_NAMESPACE_PREFIX=mlkem -DMLK_CONFIG_NAMESPACE_PREFIX=mlkem -w -c mlkem_native/src/verify.c -o build_objs/mlk_3.o
++ OBJS=' build_objs/mlk_1.o build_objs/mlk_2.o build_objs/mlk_3.o'
++ for f in $(find mlkem_native/src -name "*.c")
++ i=4
++ obj=build_objs/mlk_4.o
++ gcc -O3 -std=c99 -I mlkem_native -DMLK_CONFIG_PARAMETER_SET=768 -DMLK_CONFIG_NAMESPACE_PREFIX=mlkem -DMLK_CONFIG_NAMESPACE_PREFIX=mlkem -w -c mlkem_native/src/debug.c -o build_objs/mlk_4.o
++ OBJS=' build_objs/mlk_1.o build_objs/mlk_2.o build_objs/mlk_3.o build_objs/mlk_4.o'
++ for f in $(find mlkem_native/src -name "*.c")
++ i=5
++ obj=build_objs/mlk_5.o
++ gcc -O3 -std=c99 -I mlkem_native -DMLK_CONFIG_PARAMETER_SET=768 -DMLK_CONFIG_NAMESPACE_PREFIX=mlkem -DMLK_CONFIG_NAMESPACE_PREFIX=mlkem -w -c mlkem_native/src/kem.c -o build_objs/mlk_5.o
++ OBJS=' build_objs/mlk_1.o build_objs/mlk_2.o build_objs/mlk_3.o build_objs/mlk_4.o build_objs/mlk_5.o'
++ for f in $(find mlkem_native/src -name "*.c")
++ i=6
++ obj=build_objs/mlk_6.o
++ gcc -O3 -std=c99 -I mlkem_native -DMLK_CONFIG_PARAMETER_SET=768 -DMLK_CONFIG_NAMESPACE_PREFIX=mlkem -DMLK_CONFIG_NAMESPACE_PREFIX=mlkem -w -c mlkem_native/src/sampling.c -o build_objs/mlk_6.o
++ OBJS=' build_objs/mlk_1.o build_objs/mlk_2.o build_objs/mlk_3.o build_objs/mlk_4.o build_objs/mlk_5.o build_objs/mlk_6.o'
++ for f in $(find mlkem_native/src -name "*.c")
++ i=7
++ obj=build_objs/mlk_7.o
++ gcc -O3 -std=c99 -I mlkem_native -DMLK_CONFIG_PARAMETER_SET=768 -DMLK_CONFIG_NAMESPACE_PREFIX=mlkem -DMLK_CONFIG_NAMESPACE_PREFIX=mlkem -w -c mlkem_native/src/indcpa.c -o build_objs/mlk_7.o
++ OBJS=' build_objs/mlk_1.o build_objs/mlk_2.o build_objs/mlk_3.o build_objs/mlk_4.o build_objs/mlk_5.o build_objs/mlk_6.o build_objs/mlk_7.o'
++ for f in $(find mlkem_native/src -name "*.c")
++ i=8
++ obj=build_objs/mlk_8.o
++ gcc -O3 -std=c99 -I mlkem_native -DMLK_CONFIG_PARAMETER_SET=768 -DMLK_CONFIG_NAMESPACE_PREFIX=mlkem -DMLK_CONFIG_NAMESPACE_PREFIX=mlkem -w -c mlkem_native/src/fips202/fips202.c -o build_objs/mlk_8.o
++ OBJS=' build_objs/mlk_1.o build_objs/mlk_2.o build_objs/mlk_3.o build_objs/mlk_4.o build_objs/mlk_5.o build_objs/mlk_6.o build_objs/mlk_7.o build_objs/mlk_8.o'
++ for f in $(find mlkem_native/src -name "*.c")
++ i=9
++ obj=build_objs/mlk_9.o
++ gcc -O3 -std=c99 -I mlkem_native -DMLK_CONFIG_PARAMETER_SET=768 -DMLK_CONFIG_NAMESPACE_PREFIX=mlkem -DMLK_CONFIG_NAMESPACE_PREFIX=mlkem -w -c mlkem_native/src/fips202/keccakf1600.c -o build_objs/mlk_9.o
++ OBJS=' build_objs/mlk_1.o build_objs/mlk_2.o build_objs/mlk_3.o build_objs/mlk_4.o build_objs/mlk_5.o build_objs/mlk_6.o build_objs/mlk_7.o build_objs/mlk_8.o build_objs/mlk_9.o'
++ for f in $(find mlkem_native/src -name "*.c")
++ i=10
++ obj=build_objs/mlk_10.o
++ gcc -O3 -std=c99 -I mlkem_native -DMLK_CONFIG_PARAMETER_SET=768 -DMLK_CONFIG_NAMESPACE_PREFIX=mlkem -DMLK_CONFIG_NAMESPACE_PREFIX=mlkem -w -c mlkem_native/src/fips202/fips202x4.c -o build_objs/mlk_10.o
++ OBJS=' build_objs/mlk_1.o build_objs/mlk_2.o build_objs/mlk_3.o build_objs/mlk_4.o build_objs/mlk_5.o build_objs/mlk_6.o build_objs/mlk_7.o build_objs/mlk_8.o build_objs/mlk_9.o build_objs/mlk_10.o'
++ for f in $(find mlkem_native/src -name "*.c")
++ i=11
++ obj=build_objs/mlk_11.o
++ gcc -O3 -std=c99 -I mlkem_native -DMLK_CONFIG_PARAMETER_SET=768 -DMLK_CONFIG_NAMESPACE_PREFIX=mlkem -DMLK_CONFIG_NAMESPACE_PREFIX=mlkem -w -c mlkem_native/src/poly.c -o build_objs/mlk_11.o
++ OBJS=' build_objs/mlk_1.o build_objs/mlk_2.o build_objs/mlk_3.o build_objs/mlk_4.o build_objs/mlk_5.o build_objs/mlk_6.o build_objs/mlk_7.o build_objs/mlk_8.o build_objs/mlk_9.o build_objs/mlk_10.o build_objs/mlk_11.o'
++ echo 'Compiled 11 mlkem-native source files'
+Compiled 11 mlkem-native source files
++ g++ -std=c++17 -O2 -pthread -I mlkem_native secure_kv_demo.cpp randombytes.cpp build_objs/mlk_1.o build_objs/mlk_2.o build_objs/mlk_3.o build_objs/mlk_4.o build_objs/mlk_5.o build_objs/mlk_6.o build_objs/mlk_7.o build_objs/mlk_8.o build_objs/mlk_9.o build_objs/mlk_10.o build_objs/mlk_11.o -lcrypto -o secure_kv_demo
++ echo 'Build complete: ./secure_kv_demo'
+Build complete: ./secure_kv_demo
