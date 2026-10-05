@@ -75,7 +75,7 @@ public:
     KVEngine& operator=(const KVEngine&) = delete;
 
     bool put(const std::string& key, const std::string& value) {
-        if (key.size() > UINT32_MAX || value.size() >= TOMBSTONE) return false;
+        if (key.size() > UINT32_MAX || value.size() >= COMPACTION_BASE) return false;
         std::unique_lock lock(mutex_);
         const uint64_t ts = now_ms();
         uint64_t value_pos = 0, record_len = 0;
@@ -153,6 +153,7 @@ public:
             ::unlink(tmp_path.c_str());
             return false;
         }
+        fsync_dir(parent_dir(path_)); // make the rename itself durable, not just the file contents
 
         ::close(fd_);
         fd_ = tmp_fd;
@@ -185,7 +186,20 @@ private:
         uint64_t offset = 0;
         uint8_t header[HEADER_SIZE];
 
+        // The length fields are untrusted until the CRC has been checked, and
+        // the CRC can only be checked after reading the body. So bound them by
+        // what is actually left in the file BEFORE allocating anything: a
+        // damaged header must read as "torn record", never as a 4 GB allocation.
+        struct stat st{};
+        if (::fstat(fd_, &st) != 0 || st.st_size < 0) {
+            ::close(fd_);
+            fd_ = -1;
+            throw std::runtime_error(std::string("fstat() failed during recovery: ") + std::strerror(errno));
+        }
+        const uint64_t file_size = static_cast<uint64_t>(st.st_size);
+
         while (true) {
+            if (file_size - offset < HEADER_SIZE) break; // offset <= file_size always holds here
             const ssize_t n = ::pread(fd_, header, HEADER_SIZE, static_cast<off_t>(offset));
             if (n < static_cast<ssize_t>(HEADER_SIZE)) break;
 
@@ -193,6 +207,7 @@ private:
             uint64_t ts;
             decode_header(header, crc, ts, klen, vlen);
             const uint32_t actual_vlen = (vlen == TOMBSTONE) ? 0u : vlen;
+            if (static_cast<uint64_t>(klen) + actual_vlen > file_size - offset - HEADER_SIZE) break; // claims more bytes than exist
 
             std::vector<uint8_t> body(static_cast<size_t>(klen) + actual_vlen);
             if (!body.empty()) {

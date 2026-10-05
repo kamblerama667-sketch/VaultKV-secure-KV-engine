@@ -1,11 +1,16 @@
 #pragma once
 // kem_interface.hpp
 //
-// Real ML-KEM-768 via pq-code-package/mlkem-native -- formally proven
-// memory-safe and constant-time (see the project's own README/docs).
-// This REPLACES the INSECURE_MOCK that stood in while the rest of the
-// tunnel (framing, session keys, AES-GCM channel) was being built and
-// tested against something with the right byte sizes but no real security.
+// Real ML-KEM-768 via pq-code-package/mlkem-native. This REPLACES the
+// INSECURE_MOCK that stood in while the rest of the tunnel (framing, session
+// keys, AES-GCM channel) was being built and tested.
+//
+// What is and is not claimed: the upstream project publishes formal proofs
+// for its C code (memory/type safety, via CBMC) and for its ASSEMBLY backends
+// (constant-time behavior). THIS project builds the portable C version and
+// deliberately removes the assembly backends, so the constant-time property
+// of the code that actually runs here is NOT formally proven by upstream's
+// work, and has not been independently measured either.
 //
 // Function signatures and size macros below are taken directly from
 // mlkem-native's own examples/basic/main.c, not inferred or guessed:
@@ -28,12 +33,6 @@
 #include <cstddef>
 #include <cstdint>
 
-#ifndef MLK_CONFIG_PARAMETER_SET
-#define MLK_CONFIG_PARAMETER_SET 768
-#endif
-#ifndef MLK_CONFIG_NAMESPACE_PREFIX
-#define MLK_CONFIG_NAMESPACE_PREFIX mlkem
-#endif
 #ifndef MLK_CONFIG_PARAMETER_SET
 #define MLK_CONFIG_PARAMETER_SET 768
 #endif

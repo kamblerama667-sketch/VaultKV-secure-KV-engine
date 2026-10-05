@@ -13,7 +13,7 @@
 # (the library source, see setup below) as a sibling directory.
 set -e
 
-CFLAGS="-O3 -std=c99 -I mlkem_native -DMLK_CONFIG_PARAMETER_SET=768 -DMLK_CONFIG_NAMESPACE_PREFIX=mlkem -DMLK_CONFIG_NAMESPACE_PREFIX=mlkem -w"
+CFLAGS="-O3 -std=c99 -I mlkem_native -DMLK_CONFIG_PARAMETER_SET=768 -DMLK_CONFIG_NAMESPACE_PREFIX=mlkem -w"
 
 mkdir -p build_objs
 rm -f build_objs/*.o

@@ -11,10 +11,17 @@
 // outright. TLS 1.3 separates client_write_key / server_write_key for
 // exactly this reason; this does the same thing at a much smaller scale.
 //
-// Nonces are a big-endian-agnostic 12 bytes: 4 zero bytes + an 8-byte
-// monotonic counter, private to one direction's key. Never reused within
-// a session because it only ever increments, and never reused across
-// sessions because a fresh handshake derives a fresh key pair.
+// Nonces are 12 bytes: 4 zero bytes + an 8-byte BIG-ENDIAN counter, private
+// to one direction's key. The sender increments it per message and never
+// wraps (it refuses to send instead). The RECEIVER keeps its own counter and
+// requires every frame to carry exactly the next expected value, so:
+//   - a replayed frame           -> rejected (its counter is in the past),
+//   - frames reordered           -> rejected (counter is in the future),
+//   - a frame dropped in transit -> rejected (the next one leaves a gap),
+//   - a modified frame           -> rejected (GCM tag).
+// Any rejection is FATAL for the channel: it is marked broken and every later
+// send()/receive() fails, so callers must drop the connection (as TLS does).
+// Never reused across sessions because a fresh handshake derives fresh keys.
 //
 // Every message on the wire: [4-byte length][12-byte nonce][ciphertext]
 // [16-byte tag], where length covers everything after itself.
@@ -34,6 +41,15 @@
 namespace secure {
 
 enum class Role { Client, Server };
+
+constexpr uint32_t MIN_FRAME_BYTES = crypto::GCM_NONCE_BYTES + crypto::GCM_TAG_BYTES;
+constexpr uint32_t MAX_FRAME_BYTES = 16u * 1024 * 1024; // refuse to blindly allocate on a bogus length
+constexpr size_t MAX_PLAINTEXT_BYTES = MAX_FRAME_BYTES - MIN_FRAME_BYTES;
+
+inline void make_nonce(uint64_t counter, uint8_t nonce[crypto::GCM_NONCE_BYTES]) {
+    std::memset(nonce, 0, crypto::GCM_NONCE_BYTES);
+    for (int i = 0; i < 8; ++i) nonce[11 - i] = static_cast<uint8_t>(counter >> (8 * i)); // big-endian, host-independent
+}
 
 // A single recv()/send() on a stream socket can hand back fewer bytes
 // than requested even when more are on the way -- both loop until the
@@ -68,15 +84,18 @@ public:
           recv_key_(role == Role::Client ? server_write_key : client_write_key) {}
 
     bool send(const std::vector<uint8_t>& plaintext) {
-        uint8_t nonce[crypto::GCM_NONCE_BYTES] = {0};
-        const uint64_t counter = send_counter_++;
-        std::memcpy(nonce + 4, &counter, 8);
+        if (broken_ || send_counter_ == UINT64_MAX) return false; // never wrap the nonce counter
+        if (plaintext.size() > MAX_PLAINTEXT_BYTES) return false;  // the peer would refuse to read it
+
+        uint8_t nonce[crypto::GCM_NONCE_BYTES];
+        make_nonce(send_counter_, nonce);
 
         std::vector<uint8_t> ciphertext(plaintext.size());
         uint8_t tag[crypto::GCM_TAG_BYTES];
         if (!crypto::aes_gcm_encrypt(send_key_.data(), plaintext.data(), plaintext.size(),
                                       nonce, ciphertext.data(), tag))
             return false;
+        ++send_counter_; // this nonce now exists on a ciphertext: never hand it out again
 
         const uint32_t frame_len = static_cast<uint32_t>(
             crypto::GCM_NONCE_BYTES + ciphertext.size() + crypto::GCM_TAG_BYTES);
@@ -84,37 +103,45 @@ public:
         uint8_t len_buf[4];
         std::memcpy(len_buf, &len_be, 4);
 
-        return write_exact(fd_, len_buf, 4)
+        const bool ok = write_exact(fd_, len_buf, 4)
             && write_exact(fd_, nonce, crypto::GCM_NONCE_BYTES)
             && write_exact(fd_, ciphertext.data(), ciphertext.size())
             && write_exact(fd_, tag, crypto::GCM_TAG_BYTES);
+        if (!ok) broken_ = true; // a half-written frame leaves the stream unusable
+        return ok;
     }
 
-    // nullopt on any failure: connection closed, malformed frame, or a
-    // tag mismatch (tampered/corrupted data) -- all treated the same way
-    // by callers, as "this message can't be trusted or doesn't exist."
+    // nullopt on any failure: connection closed, malformed frame, replayed /
+    // reordered / dropped-before frame, or a tag mismatch. All failures are
+    // fatal for the channel (see the header comment): drop the connection.
     std::optional<std::vector<uint8_t>> receive() {
+        if (broken_ || recv_counter_ == UINT64_MAX) return std::nullopt;
+        auto fail = [this]() -> std::optional<std::vector<uint8_t>> { broken_ = true; return std::nullopt; };
+
         uint8_t len_buf[4];
-        if (!read_exact(fd_, len_buf, 4)) return std::nullopt;
+        if (!read_exact(fd_, len_buf, 4)) return fail();
         uint32_t len_be;
         std::memcpy(&len_be, len_buf, 4);
         const uint32_t frame_len = ntohl(len_be);
-
-        constexpr uint32_t MIN_FRAME = crypto::GCM_NONCE_BYTES + crypto::GCM_TAG_BYTES;
-        constexpr uint32_t MAX_FRAME = 16u * 1024 * 1024; // refuse to blindly allocate on a bogus length
-        if (frame_len < MIN_FRAME || frame_len > MAX_FRAME) return std::nullopt;
+        if (frame_len < MIN_FRAME_BYTES || frame_len > MAX_FRAME_BYTES) return fail();
 
         std::vector<uint8_t> frame(frame_len);
-        if (!read_exact(fd_, frame.data(), frame_len)) return std::nullopt;
+        if (!read_exact(fd_, frame.data(), frame_len)) return fail();
 
-        const uint8_t* nonce = frame.data();
-        const size_t ct_len = frame_len - MIN_FRAME;
+        // The nonce is NOT taken on faith from the wire: it must be exactly the
+        // one this side expects next. This is what defeats replay and reordering.
+        uint8_t expected[crypto::GCM_NONCE_BYTES];
+        make_nonce(recv_counter_, expected);
+        if (std::memcmp(frame.data(), expected, crypto::GCM_NONCE_BYTES) != 0) return fail();
+
+        const size_t ct_len = frame_len - MIN_FRAME_BYTES;
         const uint8_t* ciphertext = frame.data() + crypto::GCM_NONCE_BYTES;
         const uint8_t* tag = frame.data() + crypto::GCM_NONCE_BYTES + ct_len;
 
         std::vector<uint8_t> plaintext;
-        if (!crypto::aes_gcm_decrypt(recv_key_.data(), ciphertext, ct_len, nonce, tag, plaintext))
-            return std::nullopt;
+        if (!crypto::aes_gcm_decrypt(recv_key_.data(), ciphertext, ct_len, expected, tag, plaintext))
+            return fail();
+        ++recv_counter_;
         return plaintext;
     }
 
@@ -123,6 +150,8 @@ private:
     std::array<uint8_t, crypto::AES_KEY_BYTES> send_key_;
     std::array<uint8_t, crypto::AES_KEY_BYTES> recv_key_;
     uint64_t send_counter_ = 0;
+    uint64_t recv_counter_ = 0;
+    bool broken_ = false;
 };
 
 } // namespace secure
